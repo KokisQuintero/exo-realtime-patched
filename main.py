@@ -2,7 +2,7 @@ from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 import httpx
 
-app = FastAPI()
+app = FastAPI(title="EXO-FIN GPT RealTime API", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -14,13 +14,11 @@ app.add_middleware(
 ALPHA_VANTAGE_API_KEY = "UGLDAKBR7W6AO6UW"
 TWELVE_DATA_API_KEY = "573f14c758bb40ec8916d6719c7a805b"
 
-async def fetch_yahoo(symbol):
-    url = f"https://query1.finance.yahoo.com/v7/finance/quote?symbols={symbol}"
-    async with httpx.AsyncClient() as client:
-        response = await client.get(url)
-        if response.status_code != 200:
-            return None
-        try:
+async def fetch_yahoo(symbol: str):
+    try:
+        url = f"https://query1.finance.yahoo.com/v7/finance/quote?symbols={symbol}"
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, timeout=5)
             data = response.json()
             quote = data["quoteResponse"]["result"][0]
             return {
@@ -30,16 +28,14 @@ async def fetch_yahoo(symbol):
                 "timestamp": quote.get("regularMarketTime"),
                 "source": "Yahoo Finance"
             }
-        except:
-            return None
+    except:
+        return None
 
-async def fetch_twelve(symbol):
-    url = f"https://api.twelvedata.com/price?symbol={symbol}&apikey={TWELVE_DATA_API_KEY}"
-    async with httpx.AsyncClient() as client:
-        response = await client.get(url)
-        if response.status_code != 200:
-            return None
-        try:
+async def fetch_twelve(symbol: str):
+    try:
+        url = f"https://api.twelvedata.com/price?symbol={symbol}&apikey={TWELVE_DATA_API_KEY}"
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, timeout=5)
             data = response.json()
             return {
                 "symbol": symbol,
@@ -48,16 +44,14 @@ async def fetch_twelve(symbol):
                 "timestamp": None,
                 "source": "Twelve Data"
             }
-        except:
-            return None
+    except:
+        return None
 
-async def fetch_alpha(symbol):
-    url = f"https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol={symbol}&apikey={ALPHA_VANTAGE_API_KEY}"
-    async with httpx.AsyncClient() as client:
-        response = await client.get(url)
-        if response.status_code != 200:
-            return None
-        try:
+async def fetch_alpha(symbol: str):
+    try:
+        url = f"https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol={symbol}&apikey={ALPHA_VANTAGE_API_KEY}"
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, timeout=5)
             data = response.json()
             quote = data.get("Global Quote", {})
             return {
@@ -67,20 +61,72 @@ async def fetch_alpha(symbol):
                 "timestamp": quote.get("07. latest trading day"),
                 "source": "Alpha Vantage"
             }
-        except:
-            return None
+    except:
+        return None
 
 @app.get("/")
 async def root():
-    return {"message": "EXO-FIN GPT RealTime API Activa"}
+    return {
+        "message": "EXO-FIN GPT RealTime API Activa",
+        "status": "OK",
+        "version": app.version
+    }
 
 @app.get("/realtime")
-async def get_live_price(symbol: str = Query(...)):
+async def get_live_price(symbol: str = Query(..., description="Símbolo bursátil, ej: AAPL, RIOT, TSLA")):
     symbol = symbol.upper()
-
-    for source_func in [fetch_yahoo, fetch_twelve, fetch_alpha]:
-        result = await source_func(symbol)
+    for source in [fetch_yahoo, fetch_twelve, fetch_alpha]:
+        result = await source(symbol)
         if result and result["price"] > 0:
             return result
-
     return {"error": "No se pudo obtener el precio desde ninguna fuente"}
+
+@app.get("/.well-known/openapi.json")
+async def get_openapi_spec():
+    return {
+        "openapi": "3.1.0",
+        "info": {
+            "title": "EXO-FIN RealTime API",
+            "version": "1.0.0",
+            "description": "API de precios en tiempo real con fallback automático Yahoo → Twelve Data → Alpha Vantage."
+        },
+        "servers": [
+            {"url": "https://web-production-48404.up.railway.app"}
+        ],
+        "paths": {
+            "/realtime": {
+                "get": {
+                    "summary": "Obtener precio en tiempo real de una acción",
+                    "operationId": "getLivePrice",
+                    "parameters": [
+                        {
+                            "name": "symbol",
+                            "in": "query",
+                            "required": True,
+                            "description": "Símbolo bursátil (ej: AAPL, TSLA, RIOT)",
+                            "schema": {"type": "string"}
+                        }
+                    ],
+                    "responses": {
+                        "200": {
+                            "description": "Precio actual obtenido",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "symbol": {"type": "string"},
+                                            "price": {"type": "number"},
+                                            "currency": {"type": "string"},
+                                            "timestamp": {"type": "string"},
+                                            "source": {"type": "string"}
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
