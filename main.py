@@ -42,4 +42,45 @@ async def fetch_twelve(symbol):
         try:
             data = response.json()
             return {
-                "symbol": sym
+                "symbol": symbol,
+                "price": float(data.get("price", 0)),
+                "currency": "USD",
+                "timestamp": None,
+                "source": "Twelve Data"
+            }
+        except:
+            return None
+
+async def fetch_alpha(symbol):
+    url = f"https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol={symbol}&apikey={ALPHA_VANTAGE_API_KEY}"
+    async with httpx.AsyncClient() as client:
+        response = await client.get(url)
+        if response.status_code != 200:
+            return None
+        try:
+            data = response.json()
+            quote = data.get("Global Quote", {})
+            return {
+                "symbol": symbol,
+                "price": float(quote.get("05. price", 0)),
+                "currency": "USD",
+                "timestamp": quote.get("07. latest trading day"),
+                "source": "Alpha Vantage"
+            }
+        except:
+            return None
+
+@app.get("/")
+async def root():
+    return {"message": "EXO-FIN GPT RealTime API Activa"}
+
+@app.get("/realtime")
+async def get_live_price(symbol: str = Query(...)):
+    symbol = symbol.upper()
+
+    for source_func in [fetch_yahoo, fetch_twelve, fetch_alpha]:
+        result = await source_func(symbol)
+        if result and result["price"] > 0:
+            return result
+
+    return {"error": "No se pudo obtener el precio desde ninguna fuente"}
