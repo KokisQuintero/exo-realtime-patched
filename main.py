@@ -52,3 +52,6 @@ async def fetch_twelve(symbol):
             return None
 
 async def fetch_alpha(symbol):
+@app.get("/")
+async def root():
+    return {"message": "EXO-FIN GPT RealTime API Activa"}
