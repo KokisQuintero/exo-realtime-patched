@@ -42,16 +42,4 @@ async def fetch_twelve(symbol):
         try:
             data = response.json()
             return {
-                "symbol": symbol,
-                "price": float(data.get("price", 0)),
-                "currency": "USD",
-                "timestamp": None,
-                "source": "Twelve Data"
-            }
-        except:
-            return None
-
-async def fetch_alpha(symbol):
-@app.get("/")
-async def root():
-    return {"message": "EXO-FIN GPT RealTime API Activa"}
+                "symbol": sym
