@@ -2,131 +2,84 @@ from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 import httpx
 
-app = FastAPI(title="EXO-FIN GPT RealTime API", version="1.0.0")
+app = FastAPI(title="EXO-FIN GPT API v2", version="2.0.0")
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 ALPHA_VANTAGE_API_KEY = "UGLDAKBR7W6AO6UW"
 TWELVE_DATA_API_KEY = "573f14c758bb40ec8916d6719c7a805b"
 
-async def fetch_yahoo(symbol: str):
+async def fetch_yahoo(symbol):
     try:
-        url = f"https://query1.finance.yahoo.com/v7/finance/quote?symbols={symbol}"
-        async with httpx.AsyncClient() as client:
-            response = await client.get(url, timeout=5)
-            data = response.json()
-            quote = data["quoteResponse"]["result"][0]
-            return {
-                "symbol": quote["symbol"],
-                "price": quote["regularMarketPrice"],
-                "currency": quote.get("currency", "USD"),
-                "timestamp": quote.get("regularMarketTime"),
-                "source": "Yahoo Finance"
-            }
+        async with httpx.AsyncClient(timeout=5) as client:
+            r = await client.get(f"https://query1.finance.yahoo.com/v7/finance/quote?symbols={symbol}")
+        j = r.json().get("quoteResponse", {}).get("result", [])
+        if j:
+            q = j[0]
+            return {"symbol": q["symbol"], "price": q.get("regularMarketPrice", 0), "currency": q.get("currency", "USD"), "source": "Yahoo Finance"}
     except:
-        return None
+        pass
+    return None
 
-async def fetch_twelve(symbol: str):
+async def fetch_twelve(symbol):
     try:
-        url = f"https://api.twelvedata.com/price?symbol={symbol}&apikey={TWELVE_DATA_API_KEY}"
-        async with httpx.AsyncClient() as client:
-            response = await client.get(url, timeout=5)
-            data = response.json()
-            return {
-                "symbol": symbol,
-                "price": float(data.get("price", 0)),
-                "currency": "USD",
-                "timestamp": None,
-                "source": "Twelve Data"
-            }
+        async with httpx.AsyncClient(timeout=5) as client:
+            r = await client.get(f"https://api.twelvedata.com/price?symbol={symbol}&apikey={TWELVE_DATA_API_KEY}")
+        d = r.json()
+        if "price" in d:
+            return {"symbol": symbol, "price": float(d["price"]), "currency": "USD", "source": "Twelve Data"}
     except:
-        return None
+        pass
+    return None
 
-async def fetch_alpha(symbol: str):
+async def fetch_alpha(symbol):
     try:
-        url = f"https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol={symbol}&apikey={ALPHA_VANTAGE_API_KEY}"
-        async with httpx.AsyncClient() as client:
-            response = await client.get(url, timeout=5)
-            data = response.json()
-            quote = data.get("Global Quote", {})
-            return {
-                "symbol": symbol,
-                "price": float(quote.get("05. price", 0)),
-                "currency": "USD",
-                "timestamp": quote.get("07. latest trading day"),
-                "source": "Alpha Vantage"
-            }
+        async with httpx.AsyncClient(timeout=5) as client:
+            r = await client.get(f"https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol={symbol}&apikey={ALPHA_VANTAGE_API_KEY}")
+        d = r.json().get("Global Quote", {})
+        if "05. price" in d:
+            return {"symbol": symbol, "price": float(d["05. price"]), "currency": "USD", "source": "Alpha Vantage"}
     except:
-        return None
+        pass
+    return None
+
+async def get_price(symbol):
+    for fn in (fetch_yahoo, fetch_twelve, fetch_alpha):
+        res = await fn(symbol)
+        if res and res["price"] > 0:
+            return res
+    return {"error": f"No se pudo obtener precio para {symbol}"}
 
 @app.get("/")
 async def root():
-    return {
-        "message": "EXO-FIN GPT RealTime API Activa",
-        "status": "OK",
-        "version": app.version
-    }
+    return {"message": "EXO-FIN GPT API v2 activa"}
 
 @app.get("/realtime")
-async def get_live_price(symbol: str = Query(..., description="Símbolo bursátil, ej: AAPL, RIOT, TSLA")):
-    symbol = symbol.upper()
-    for source in [fetch_yahoo, fetch_twelve, fetch_alpha]:
-        result = await source(symbol)
-        if result and result["price"] > 0:
-            return result
-    return {"error": "No se pudo obtener el precio desde ninguna fuente"}
+async def realtime(symbol: str = Query(..., description="Símbolo bursátil (ej: AAPL, RIOT, ZIP.AX)")):
+    return await get_price(symbol.upper())
 
-@app.get("/.well-known/openapi.json")
-async def get_openapi_spec():
-    return {
-        "openapi": "3.1.0",
-        "info": {
-            "title": "EXO-FIN RealTime API",
-            "version": "1.0.0",
-            "description": "API de precios en tiempo real con fallback automático Yahoo → Twelve Data → Alpha Vantage."
-        },
-        "servers": [
-            {"url": "https://web-production-48404.up.railway.app"}
-        ],
-        "paths": {
-            "/realtime": {
-                "get": {
-                    "summary": "Obtener precio en tiempo real de una acción",
-                    "operationId": "getLivePrice",
-                    "parameters": [
-                        {
-                            "name": "symbol",
-                            "in": "query",
-                            "required": True,
-                            "description": "Símbolo bursátil (ej: AAPL, TSLA, RIOT)",
-                            "schema": {"type": "string"}
-                        }
-                    ],
-                    "responses": {
-                        "200": {
-                            "description": "Precio actual obtenido",
-                            "content": {
-                                "application/json": {
-                                    "schema": {
-                                        "type": "object",
-                                        "properties": {
-                                            "symbol": {"type": "string"},
-                                            "price": {"type": "number"},
-                                            "currency": {"type": "string"},
-                                            "timestamp": {"type": "string"},
-                                            "source": {"type": "string"}
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
+@app.post("/dailycheck")
+async def daily_check(data: dict):
+    out = []
+    for pos in data.get("positions", []):
+        s = pos.get("symbol", "").upper()
+        info = await get_price(s)
+        if "error" in info:
+            out.append({"symbol": s, "error": info["error"]})
+            continue
+        cp = info["price"]
+        bp = pos.get("price", 0)
+        pl = round((cp - bp) / bp * 100, 2) if bp else None
+        out.append({
+            "symbol": s,
+            "quantity": pos.get("quantity"),
+            "buy_price": bp,
+            "current_price": cp,
+            "currency": info["currency"],
+            "source": info["source"],
+            "TP": round(bp * 1.5, 2),
+            "SL": round(bp * 0.8, 2),
+            "PL_percent": pl,
+            "decision": "VENDER" if pl and pl >= 50 else ("REFORZAR" if pl and pl <= -20 else "MANTENER")
+        })
+    return out
